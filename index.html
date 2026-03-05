@@ -193,10 +193,52 @@ svg{font-family:'Outfit',sans-serif;}
 .heat-danger{background:var(--danger-pale);color:var(--danger);}
 .heat-empty{background:var(--bg2);color:var(--muted);}
 </style>
+
+<!-- ═══════════════════════════════════════════════════════════
+     FIREBASE CONFIG
+     1. Acesse https://console.firebase.google.com
+     2. Crie um projeto → Firestore Database → Iniciar em modo teste
+     3. Configurações do projeto → Seus apps → </> Web app → Registrar
+     4. Copie o objeto firebaseConfig e cole abaixo
+     ════════════════════════════════════════════════════════ -->
+<script type="module">
+import { initializeApp }   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc }
+                            from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey:            "AIzaSyAwPdQqvrQJiX3twyKY6enMlhRX-6O69ko",
+  authDomain:        "aquamonitor-7caf3.firebaseapp.com",
+  projectId:         "aquamonitor-7caf3",
+  storageBucket:     "aquamonitor-7caf3.firebasestorage.app",
+  messagingSenderId: "141430499033",
+  appId:             "1:141430499033:web:bd27c398a25f5b7c2900c8"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const fsDb  = getFirestore(fbApp);
+window._fbDoc    = doc(fsDb, 'aquamonitor', 'db');
+window._fbGetDoc = getDoc;
+window._fbSetDoc = setDoc;
+window._fbReady  = true;
+</script>
 </head>
 <body>
 
 <!-- LOGIN -->
+<div id="fbLoadingScreen" style="display:none;position:fixed;inset:0;background:var(--bg,#f0f4f8);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:1rem">
+  <div style="font-size:2.5rem">💧</div>
+  <div style="font-size:1rem;font-weight:600;color:#0a4d6e">AquaMonitor</div>
+  <div style="font-size:.8rem;color:#3a6070">Conectando ao banco de dados...</div>
+  <div style="width:180px;height:4px;background:#d0e8f0;border-radius:4px;overflow:hidden;margin-top:.5rem">
+    <div style="height:100%;background:#2ab4e8;border-radius:4px;animation:fbload 1.5s ease-in-out infinite"></div>
+  </div>
+</div>
+<style>
+@keyframes fbload {
+  0%{width:0%;margin-left:0} 50%{width:60%;margin-left:20%} 100%{width:0%;margin-left:100%}
+}
+</style>
 <div id="loginScreen" class="auth-screen">
   <div class="auth-card">
     <div class="auth-logo"><div class="auth-logo-ic">💧</div><div class="logo-t">Aqua<span>Monitor</span></div></div>
@@ -518,6 +560,23 @@ svg{font-family:'Outfit',sans-serif;}
           <table class="tbl"><thead><tr><th>Nome</th><th>Unidades</th><th>Ativo</th><th></th></tr></thead><tbody id="blocosTableSettings"></tbody></table>
         </div>
         <div class="panel" style="margin-top:.85rem">
+          <div class="ph"><div><div class="pt">💾 Backup & Compartilhamento</div><div class="ps">Exporte os dados para compartilhar com outros dispositivos ou como backup</div></div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+            <div style="background:var(--blue-xpale);border-radius:12px;padding:1rem">
+              <div style="font-weight:700;font-size:.82rem;margin-bottom:.3rem">📤 Exportar dados</div>
+              <div style="font-size:.72rem;color:var(--text2);line-height:1.6;margin-bottom:.75rem">Baixa um arquivo <strong>.json</strong> com todos os dados do sistema. Envie por WhatsApp, e-mail ou drive para outros usuários importarem.</div>
+              <button class="btn btn-primary" style="width:100%" onclick="exportDB()">⬇ Baixar backup.json</button>
+            </div>
+            <div style="background:var(--bg2);border-radius:12px;padding:1rem;border:1.5px dashed var(--border)">
+              <div style="font-weight:700;font-size:.82rem;margin-bottom:.3rem">📥 Importar dados</div>
+              <div style="font-size:.72rem;color:var(--text2);line-height:1.6;margin-bottom:.75rem">Carrega um arquivo <strong>.json</strong> exportado anteriormente. <strong style="color:var(--danger)">Substitui todos os dados locais.</strong></div>
+              <input type="file" id="importDBFile" accept=".json" style="display:none" onchange="importDB(this)">
+              <button class="btn btn-outline" style="width:100%" onclick="document.getElementById('importDBFile').click()">📂 Carregar backup.json</button>
+            </div>
+          </div>
+          <div id="importDBStatus" style="display:none;margin-top:.7rem"></div>
+        </div>
+        <div class="panel" style="margin-top:.85rem">
           <div class="ph"><div class="pt">⚠️ Zona de Perigo</div></div>
           <div style="display:flex;gap:.6rem;flex-wrap:wrap">
             <button class="btn" style="background:none;border:1.5px solid var(--danger);color:var(--danger)" onclick="clearAllData()">Limpar todos os dados</button>
@@ -644,7 +703,7 @@ svg{font-family:'Outfit',sans-serif;}
 
 <script>
 // ══════════════════════════════════════════════════════════
-// STATE — tudo em memória, persistido em localStorage
+// STATE — tudo em memória, persistido no Firestore
 // ══════════════════════════════════════════════════════════
 var DB = { users:[], condos:[], blocos:[], unidades:[], leituras:[], alertas:[], settings:{}, importHistory:[] };
 var me = null, condo = null;
@@ -654,13 +713,40 @@ var ALERT_AT = 20, ALERT_CR = 50, ALERT_LIM = 0; // ALERT_LIM = limite fixo m³ 
 
 // ── Persistência ──────────────────────────────────────────
 function saveDB() {
-  try { localStorage.setItem('aqm_db', JSON.stringify(DB)); } catch(e) { console.warn('localStorage cheio'); }
+  try { localStorage.setItem('aqm_db', JSON.stringify(DB)); } catch(e) {}
+  if (window._fbReady && window._fbDoc) {
+    window._fbSetDoc(window._fbDoc, { payload: JSON.stringify(DB) })
+      .catch(function(e){ console.warn('Firestore write:', e.message); });
+  }
 }
+var _DBDEFAULT = {users:[],condos:[],blocos:[],unidades:[],leituras:[],alertas:[],settings:{},importHistory:[],alertNotas:{}};
+
+function _applyRaw(raw) {
+  try {
+    var parsed = JSON.parse(raw);
+    DB = Object.assign({}, _DBDEFAULT, parsed);
+  } catch(e) { DB = Object.assign({}, _DBDEFAULT); }
+}
+
 function loadDB() {
   try {
     var raw = localStorage.getItem('aqm_db');
-    if (raw) { var parsed = JSON.parse(raw); DB = Object.assign({users:[],condos:[],blocos:[],unidades:[],leituras:[],alertas:[],settings:{},importHistory:[]}, parsed); }
-  } catch(e) { DB = {users:[],condos:[],blocos:[],unidades:[],leituras:[],alertas:[],settings:{},importHistory:[]}; }
+    if (raw) _applyRaw(raw);
+  } catch(e) { DB = Object.assign({}, _DBDEFAULT); }
+}
+
+function loadDBFromFirestore(callback) {
+  if (!window._fbReady || !window._fbDoc) { callback && callback(); return; }
+  window._fbGetDoc(window._fbDoc).then(function(snap) {
+    if (snap.exists()) {
+      _applyRaw(snap.data().payload);
+      try { localStorage.setItem('aqm_db', snap.data().payload); } catch(e) {}
+    }
+    callback && callback();
+  }).catch(function(e) {
+    console.warn('Firestore read:', e.message);
+    callback && callback();
+  });
 }
 function uid() { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
@@ -1994,30 +2080,41 @@ function populateDelMesSel() {
 
 function populateMesAtivo() {
   var sel = document.getElementById('mesAtivoSel'); if(!sel) return;
+
+  // Meses que têm leituras reais — fonte da verdade
   var mesesComDados = {};
   getLeituras().forEach(function(l){ mesesComDados[l.data.substring(0,7)]=true; });
-  var hoje = new Date();
-  var mesesCalendario = {};
-  for(var i=0;i<3;i++){
-    var d=new Date(hoje); d.setDate(1); d.setMonth(d.getMonth()-i);
-    mesesCalendario[d.toISOString().substring(0,7)]=true;
-  }
-  // Merge - data months override calendar so they appear first when sorted
-  var mesesSet = Object.assign({}, mesesCalendario, mesesComDados);
+  var comDados = Object.keys(mesesComDados).sort().reverse(); // mais recente primeiro
+
+  // Opções = meses com dados + mês corrente (para lançamentos manuais futuros)
+  var mesesSet = Object.assign({}, mesesComDados);
+  var hoje = new Date().toISOString().substring(0,7);
+  mesesSet[hoje] = true;
   var arr = Object.keys(mesesSet).sort().reverse();
-  var prev = sel.value || mesAtivo;
-  sel.innerHTML='';
+
+  // Preenche o seletor
+  sel.innerHTML = '';
   arr.forEach(function(m){
-    var o=document.createElement('option');
-    o.value=m; o.textContent=getML(m)+'/'+m.split('-')[0];
+    var o = document.createElement('option');
+    o.value = m;
+    o.textContent = getML(m)+'/'+m.split('-')[0];
     sel.appendChild(o);
   });
-  // DEFAULT: most recent month WITH data (not current calendar month)
-  var comDados = arr.filter(function(m){ return mesesComDados[m]; });
-  if(prev && arr.indexOf(prev)>=0) sel.value=prev;
-  else if(comDados.length) sel.value=comDados[0];
-  else if(arr.length) sel.value=arr[0];
-  mesAtivo = sel.value || comDados[0] || arr[0] || new Date().toISOString().substring(0,7);
+
+  // Regra de seleção:
+  // 1. Se já há um mês selecionado manualmente pelo usuário E ele tem dados → mantém
+  // 2. Caso contrário → último mês COM dados
+  // 3. Fallback → primeiro item da lista
+  var prevTemDados = mesAtivo && mesesComDados[mesAtivo];
+  if(prevTemDados) {
+    sel.value = mesAtivo;
+  } else if(comDados.length) {
+    sel.value = comDados[0]; // último mês com dados reais
+  } else {
+    sel.value = arr[0];
+  }
+
+  mesAtivo = sel.value;
 }
 
 function onMesAtivoChange() {
@@ -2027,19 +2124,125 @@ function onMesAtivoChange() {
   renderAll();
 }
 
-document.addEventListener('click',function(e){ if(e.target.classList.contains('ov')) e.target.classList.remove('open'); });
+// ══════════════════════════════════════════════════════════
+// BACKUP & RESTORE
+// ══════════════════════════════════════════════════════════
+function exportDB() {
+  var payload = {
+    _version: 1,
+    _exportedAt: new Date().toISOString(),
+    _condo: condo ? condo.nome : '',
+    data: DB
+  };
+  var json = JSON.stringify(payload, null, 2);
+  var blob = new Blob([json], {type: 'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  var condoSlug = (condo ? condo.nome : 'aquamonitor').toLowerCase().replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'');
+  var date = new Date().toISOString().substring(0,10);
+  a.href = url;
+  a.download = condoSlug + '-backup-' + date + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('✅ Backup exportado — envie o arquivo para os outros dispositivos');
+}
+
+function importDB(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var statusEl = document.getElementById('importDBStatus');
+    try {
+      var parsed = JSON.parse(e.target.result);
+      // Aceita tanto o formato com envelope {_version, data} quanto o DB direto
+      var newDB = parsed.data || parsed;
+      // Validação mínima
+      if (!newDB.users || !newDB.condos) throw new Error('Arquivo inválido — não parece ser um backup do AquaMonitor.');
+      var nUsers   = (newDB.users||[]).length;
+      var nUnid    = (newDB.unidades||[]).length;
+      var nLeit    = (newDB.leituras||[]).length;
+      var exportedAt = parsed._exportedAt ? new Date(parsed._exportedAt).toLocaleDateString('pt-BR') : '—';
+      var msg = 'Importar backup de '+exportedAt+'?\n\n'
+        + '  • ' + nUsers   + ' usuário(s)\n'
+        + '  • ' + nUnid    + ' unidades\n'
+        + '  • ' + nLeit    + ' leituras\n\n'
+        + 'ATENÇÃO: os dados locais serão substituídos.';
+      if (!confirm(msg)) { input.value=''; return; }
+      // Merge defaults para campos novos que possam não existir no backup
+      DB = Object.assign(
+        {users:[],condos:[],blocos:[],unidades:[],leituras:[],alertas:[],settings:{},importHistory:[],alertNotas:{}},
+        newDB
+      );
+      saveDB();
+      // Recarregar sessão
+      var sessionId = localStorage.getItem('aqm_session');
+      var user = DB.users.filter(function(u){ return u.id===sessionId; })[0];
+      if (user) {
+        me = user;
+        bootApp();
+      } else {
+        // Sessão não bate — logar com primeiro admin disponível ou ir para login
+        me = DB.users[0] || null;
+        if (me) {
+          localStorage.setItem('aqm_session', me.id);
+          bootApp();
+        } else {
+          doLogout();
+        }
+      }
+      statusEl.style.display='block';
+      statusEl.innerHTML='<div class="ai info"><div class="ai-ic">✅</div><div><span class="ai-title">Backup importado com sucesso</span><span class="ai-desc">'+nLeit+' leituras e '+nUnid+' unidades carregadas.</span></div></div>';
+      toast('✅ Dados importados — ' + nLeit + ' leituras carregadas');
+    } catch(err) {
+      statusEl.style.display='block';
+      statusEl.innerHTML='<div class="ai warn"><div class="ai-ic">❌</div><div><span class="ai-title">Erro ao importar</span><span class="ai-desc">'+esc(err.message)+'</span></div></div>';
+      toast('❌ Erro: ' + err.message);
+    }
+    input.value = '';
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+
 
 // ══════════════════════════════════════════════════════════
 // BOOT
 // ══════════════════════════════════════════════════════════
 window.addEventListener('DOMContentLoaded', function() {
-  loadDB();
-  var sessionId=localStorage.getItem('aqm_session');
-  if(sessionId){
-    var user=DB.users.filter(function(u){ return u.id===sessionId; })[0];
-    if(user){ me=user; bootApp(); return; }
+  var loginEl  = document.getElementById('loginScreen');
+  var loadEl   = document.getElementById('fbLoadingScreen');
+
+  function tryBoot() {
+    var sessionId = localStorage.getItem('aqm_session');
+    if (sessionId) {
+      var user = DB.users.filter(function(u){ return u.id===sessionId; })[0];
+      if (user) { me=user; bootApp(); return; }
+    }
+    loginEl.style.display = 'flex';
   }
-  document.getElementById('loginScreen').style.display='flex';
+
+  // Carrega cache local imediatamente (offline-first)
+  loadDB();
+
+  if (window._fbReady) {
+    if (loadEl) loadEl.style.display = 'flex';
+    // Firebase SDK é type=module — pode demorar ~200ms para expor _fbDoc
+    var tries = 0;
+    var wait = setInterval(function() {
+      tries++;
+      if (window._fbDoc || tries > 50) {
+        clearInterval(wait);
+        loadDBFromFirestore(function() {
+          if (loadEl) loadEl.style.display = 'none';
+          tryBoot();
+        });
+      }
+    }, 100);
+  } else {
+    if (loadEl) loadEl.style.display = 'none';
+    tryBoot();
+  }
 });
 </script>
 </body>
